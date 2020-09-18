@@ -1,0 +1,40 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider        = "prisma-client-js"
+  binaryTargets   = ["native"]
+  previewFeatures = ["atomicNumberOperations", "connectOrCreate", "insensitiveFilters", "transactionApi"]
+}
+
+model Docket {
+  id String @id
+  comments Comment[]
+  documents Document[]
+  attributes Json
+  links Json
+}
+
+model Document {
+  id String @id
+  docketId String
+  docket Docket @relation(fields: [docketId], references: [id])
+  comments Comment[]
+  attributes Json
+  links Json
+  relationships Json
+}
+
+model Comment {
+  id String @id
+  docketId String
+  docket Docket @relation(fields: [docketId], references: [id])
+  documentId String
+  document Document @relation(fields: [documentId], references: [id])
+  attributes Json
+  links Json
+  relationships Json
+}
+
