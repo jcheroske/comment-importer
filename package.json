@@ -6,6 +6,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "lint": "eslint '**/.?*.{js,json,ts}' --quiet --fix",
+    "import": "node ./dist/index.js",
+    "openapi:generate": "openapi-generator generate -i https://open.gsa.gov/api/regulationsgov/v4/openapi.yaml -g typescript-axios -o ./src/openapi",
     "prisma:client": "prisma generate",
     "prisma:lint": "prisma format",
     "prisma:migrate": "prisma migrate --experimental",
@@ -32,11 +34,14 @@
   "dependencies": {
     "@js-joda/core": "^3.1.0",
     "@prisma/client": "^2.7.1",
+    "axios": "^0.20.0",
     "bluebird": "^3.7.2",
     "envalid": "^6.0.2",
+    "esm": "^3.2.25",
     "jsdom": "^16.4.0",
     "lodash": "^4.17.20",
     "papaparse": "^5.3.0",
-    "swagger-client": "^3.11.0"
+    "swagger-client": "^3.11.0",
+    "type-fest": "^0.16.0"
   }
 }

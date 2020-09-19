@@ -2,12 +2,14 @@ import { promises as fs } from 'fs'
 import { LocalDate } from '@js-joda/core'
 import { PrismaClient } from '@prisma/client'
 import type { Docket, Document, Comment } from '@prisma/client'
+import axiosStatic, { AxiosError, AxiosInstance } from 'axios'
 import { Promise } from 'bluebird'
 import { JSDOM } from 'jsdom'
 import { pick } from 'lodash/fp'
 import Papa from 'papaparse'
 import SwaggerClient from 'swagger-client'
-import { loadAndValidateEnv } from '@/util/loadAndValidateEnv'
+import { loadAndValidateEnv } from './util/loadAndValidateEnv'
+import { CommentAttributes, DocumentAttributes } from './model-types-d'
 
 const { window } = new JSDOM()
 
@@ -21,11 +23,9 @@ type SwaggerResult = {
   status: string
   statusText: string
   obj: {
-    data: {
-      [index: string]: unknown
-    }
+    data: Array<SwaggerModel>
     meta: {
-      [index: string]: unknown
+      [index: string]: number
     }
   }
 }
@@ -36,9 +36,15 @@ interface SwaggerModel {
 
 interface NewModel {
   id: string
-  attributes: object
-  links: object
-  relationships: object
+  attributes: {
+    [key: string]: string
+  }
+  links: {
+    [key: string]: string
+  }
+  relationships: {
+    [key: string]: string
+  }
 }
 
 interface ModelConnection {
@@ -47,21 +53,19 @@ interface ModelConnection {
   }
 }
 
-let prisma: PrismaClient
-let swagger: SwaggerClient
+const prisma: PrismaClient = new PrismaClient()
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let swagger: any
 ;(async () => {
   try {
     swagger = await getSwaggerClient()
-    prisma = new PrismaClient()
 
     await importIntoDatabase()
     await generateCsvFile()
   } catch (e) {
     console.log(e)
   } finally {
-    if (prisma != null) {
-      await prisma.$disconnect()
-    }
+    await prisma.$disconnect()
   }
 })()
 
@@ -69,16 +73,19 @@ async function importIntoDatabase() {
   await createDocket(DOCKET_ID)
 
   const document = await createDocument(DOCUMENT_ID)
+  const documentAttributes = document.attributes as DocumentAttributes
 
-  const commentStartDate = convertDateTimeToLocalDate(document.attributes.commentStartDate)
-  const commentEndDate = convertDateTimeToLocalDate(document.attributes.commentEndDate)
+  const commentStartDate = convertDateTimeToLocalDate(documentAttributes.commentStartDate)
+  const commentEndDate = convertDateTimeToLocalDate(documentAttributes.commentEndDate)
   const today = LocalDate.now()
   const loopEndDate = commentEndDate.isBefore(today) ? commentEndDate : today
   for (let d = commentStartDate; d.compareTo(loopEndDate) <= 0; d = d.plusDays(1)) {
-    let pageNumber, totalPages
+    let pageNumber,
+      totalPages,
+      commentsProcessed = 0
     do {
       const swaggerResult: SwaggerResult = await swagger.apis.comments.get_comments({
-        'filter[commentOnId]': document.attributes.objectId,
+        'filter[commentOnId]': documentAttributes.objectId,
         'filter[postedDate]': d.toString(),
         'page[number]': pageNumber,
         sort: 'postedDate',
@@ -87,13 +94,19 @@ async function importIntoDatabase() {
       checkSwaggerResult(swaggerResult)
       const { data, meta } = swaggerResult.obj
 
+      await Promise.each(data, async (c) => {
+        // console.log(`[${d.toString()}] Processing Comment ${++commentNumber}/${meta.totalElements}`)
+        commentsProcessed += 1
+        await createComment(c.id)
+      })
+
       console.log(
-        `[${d.toString()}] Page ${meta.pageNumber}/${meta.totalPages}, Count: ${
+        `[${d.toString()}] Page/Total Pages: ${meta.pageNumber}/${
+          meta.totalPages
+        }, Processed/Expected/Total: ${commentsProcessed}/${
           meta.numberOfElements + (meta.pageNumber - 1) * meta.pageSize
         }/${meta.totalElements}`
       )
-
-      await Promise.map(data, (c: SwaggerModel) => createComment(c.id))
 
       pageNumber = meta.pageNumber + 1
       totalPages = meta.totalPages
@@ -102,24 +115,26 @@ async function importIntoDatabase() {
 }
 
 async function generateCsvFile() {
-  const comments = await prisma.comment.findMany({
-    select: {
-      id: true,
-      attributes: true,
-    },
-  })
+  const comments = await prisma.$queryRaw<Comment[]>(`
+    select * from "Comment"
+    where cast(attributes ->> 'postedDate' as timestamp) >= cast('2020-09-14' as timestamp)
+    order by attributes -> 'postedDate' asc
+  `)
 
-  const csvComments = comments.map((c) => ({
-    id: c.id,
-    firstName: c.attributes.firstName,
-    lastName: c.attributes.lastName,
-    title: c.attributes.title,
-    comment: stripHtml(c.attributes.comment),
-    postedDate: c.attributes.postedDate,
-    city: c.attributes.city,
-    submitterRepCityState: c.attributes.submitterRepCityState,
-    country: c.attributes.country,
-  }))
+  const csvComments = comments.map((c) => {
+    const attributes = c.attributes as CommentAttributes
+    return {
+      id: c.id,
+      postedDate: attributes.postedDate,
+      firstName: attributes.firstName,
+      lastName: attributes.lastName,
+      title: attributes.title,
+      comment: stripHtml(attributes.comment),
+      city: attributes.city,
+      submitterRepCityState: attributes.submitterRepCityState,
+      country: attributes.country,
+    }
+  })
 
   const csvString = Papa.unparse(csvComments)
 
@@ -178,6 +193,7 @@ async function createComment(commentId: string): Promise<Comment> {
         ...newModelFromResult(swaggerResult),
         docket: connectToModel('docketId', swaggerResult),
         document: connectToModel('commentOnDocumentId', swaggerResult),
+        nb,
       },
     })
     console.log(`Comment[${comment.id}] created`)
@@ -185,9 +201,8 @@ async function createComment(commentId: string): Promise<Comment> {
   return comment
 }
 
-async function getSwaggerClient(): Promise<SwaggerClient> {
+async function getSwaggerClient() {
   const requestInterceptor = (req: Request): Request => {
-    // @ts-ignore
     req.headers['x-api-key'] = env.REGULATIONS_API_KEY
     return req
   }
@@ -219,3 +234,5 @@ function connectToModel(foreignKey: string, result: SwaggerResult): ModelConnect
 function convertDateTimeToLocalDate(datetime: string): LocalDate {
   return LocalDate.parse(datetime.split('T')[0])
 }
+
+export default {}

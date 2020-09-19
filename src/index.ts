@@ -1,3 +1,3 @@
-// eslint-disable-next-line no-global-assign
-//require = require('esm')(module)
-module.exports = require('./main.js')
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+require = require('esm')(module)
+require('./main')
