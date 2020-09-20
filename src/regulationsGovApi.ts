@@ -1,19 +1,17 @@
 import axiosStatic, { AxiosInstance, AxiosRequestConfig } from 'axios'
-import { cleanEnv, str, url } from 'envalid'
-import { JsonArray, JsonObject } from 'type-fest'
+import envalid from 'envalid'
+import Qs from 'qs'
+
+const { cleanEnv, str, url } = envalid
 
 type Options = {
   apiKey: string
   baseURL: string
 }
 
-type AxiosRequestConfigWithURLParams = AxiosRequestConfig & {
-  urlParams: {
-    [key: string]: string | number | boolean
-  }
-}
-
-type Pagination = {
+export interface Pagination {
+  hasNextPage: boolean
+  hasPreviousPage: boolean
   pageNumber: number
   totalPages: number
   pageSize: number
@@ -21,7 +19,17 @@ type Pagination = {
   totalElements: number
 }
 
-type API = {
+export interface RestModel {
+  id: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  attributes: any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  links: any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  relationships: any
+}
+
+export interface API {
   getComments({
     documentObjectId,
     postedDate,
@@ -30,35 +38,57 @@ type API = {
     documentObjectId: string
     postedDate: string
     page: number
-  }): [JsonArray, Pagination]
+  }): Promise<[Array<RestModel>, Pagination]>
 
-  getDocket({ docketId }: { docketId: string }): JsonObject
-  getDocument({ documentId }: { documentId: string }): JsonObject
+  getComment({ commentId }: { commentId: string }): Promise<RestModel>
+  getDocket({ docketId }: { docketId: string }): Promise<RestModel>
+  getDocument({ documentId }: { documentId: string }): Promise<RestModel>
 }
 
-function initialize(): API {
+export function initialize(): API {
   const options = getOptions()
   const axios = createAxios(options)
 
   return {
-    getComments: createGetComments(axios),
-    getDocket: createGetDocket(axios),
-    getDocument: createGetDocument(axios),
-  }
-}
+    async getComments({ documentObjectId, postedDate, page }) {
+      const res = await axios.get(`/comments`, {
+        params: {
+          filter: { commentOnId: documentObjectId, postedDate },
+          page: { number: page },
+          sort: 'postedDate',
+        },
+      })
 
-function createAxios(options: Options): AxiosInstance {
-  const axiosInstance = axiosStatic.create({
-    baseURL: options.baseURL,
-    headers: {
-      'Content-Type': 'application/vnd.api+json;charset=UTF-8',
-      'X-Api-Key': options.apiKey,
+      return [res.data.data, res.data.meta]
     },
-  })
 
-  axiosInstance.interceptors.request.use(urlParamInterceptor)
+    async getComment({ commentId }) {
+      const res = await axios.get('/comments/:id', {
+        params: {
+          id: commentId,
+        },
+      })
+      return res.data.data
+    },
 
-  return axiosInstance
+    async getDocket({ docketId }) {
+      const res = await axios.get('/docket/:id', {
+        params: {
+          id: docketId,
+        },
+      })
+      return res.data.data
+    },
+
+    async getDocument({ documentId }) {
+      const res = await axios.get('/documents/:id', {
+        params: {
+          id: documentId,
+        },
+      })
+      return res.data.data
+    },
+  }
 }
 
 function getOptions(): Options {
@@ -73,14 +103,33 @@ function getOptions(): Options {
   }
 }
 
-function urlParamInterceptor(config: AxiosRequestConfig) {
-  const config_ = config as AxiosRequestConfigWithURLParams
-  const replaceTokens = (urlPart: string) =>
-    Object.entries(config_.urlParams).reduce((memo, [k, v]) => memo.replace(`:${k}`, encodeURIComponent(v)), urlPart)
+function createAxios(options: Options): AxiosInstance {
+  const axiosInstance = axiosStatic.create({
+    baseURL: options.baseURL,
+    headers: {
+      'Content-Type': 'application/vnd.api+json;charset=UTF-8',
+      'X-Api-Key': options.apiKey,
+    },
+    paramsSerializer,
+  })
 
-  return {
-    ...config,
-    url: replaceTokens(config.url as string),
-    baseUrl: replaceTokens(config.baseURL as string),
+  axiosInstance.interceptors.request.use(urlParamInterceptor)
+
+  return axiosInstance
+}
+
+function urlParamInterceptor(config: AxiosRequestConfig): AxiosRequestConfig {
+  for (const k in config.params) {
+    const v = config.params[k]
+    if (config.url?.includes(`:${k}`)) {
+      config.url = config.url.replace(`:${k}`, encodeURIComponent(v))
+      delete config.params[k]
+    }
   }
+
+  return config
+}
+
+function paramsSerializer(params: AxiosRequestConfig['params']) {
+  return Qs.stringify(params)
 }

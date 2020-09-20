@@ -1,29 +1,24 @@
-import { Primitive } from 'type-fest'
-import { AxiosRequestConfig } from 'axios'
+import { initialize } from './regulationsGovApi.js'
+import { AxiosError } from 'axios'
 
-type AxiosRequestConfigWithURLParams = AxiosRequestConfig & {
-  urlParams: {
-    [key: string]: string | number | boolean
+process.on('unhandledRejection', (error: Error) => {
+  // Will print "unhandledRejection err is not defined"
+  console.log('unhandledRejection', error)
+  if (error.isAxiosError) {
+    console.log(error.response?.data?.errors?.[0])
   }
-}
+})
 
-const config: AxiosRequestConfigWithURLParams = {
-  url: '/comments/:id',
-  baseURL: 'https://api.regulations.gov/v4',
-  urlParams: {
-    id: 1234,
-  },
-}
+const api = initialize()
 
-function urlParamInterceptor(config: AxiosRequestConfigWithURLParams) {
-  const replaceTokens = (urlPart: string) =>
-    Object.entries(config.urlParams).reduce((memo, [k, v]) => memo.replace(`:${k}`, encodeURIComponent(v)), urlPart)
+;(async () => {
+  const document = await api.getDocument({ documentId: 'CDC-2020-0087-0001' })
+  const [comments, meta] = await api.getComments({
+    documentObjectId: document?.attributes?.objectId,
+    postedDate: '2020-08-14',
+    page: 1,
+  })
 
-  return {
-    ...config,
-    url: replaceTokens(config.url as string),
-    baseUrl: replaceTokens(config.baseURL as string),
-  }
-}
-
-console.log(urlParamInterceptor(config))
+  console.log(comments)
+  console.log(meta)
+})()

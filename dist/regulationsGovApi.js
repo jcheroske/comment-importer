@@ -1,24 +1,46 @@
 import axiosStatic from 'axios';
-import { cleanEnv, str, url } from 'envalid';
-function initialize() {
+import envalid from 'envalid';
+import Qs from 'qs';
+const { cleanEnv, str, url } = envalid;
+export function initialize() {
     const options = getOptions();
     const axios = createAxios(options);
     return {
-        getComments: createGetComments(axios),
-        getDocket: createGetDocket(axios),
-        getDocument: createGetDocument(axios),
-    };
-}
-function createAxios(options) {
-    const axiosInstance = axiosStatic.create({
-        baseURL: options.baseURL,
-        headers: {
-            'Content-Type': 'application/vnd.api+json;charset=UTF-8',
-            'X-Api-Key': options.apiKey,
+        async getComments({ documentObjectId, postedDate, page }) {
+            const res = await axios.get(`/comments`, {
+                params: {
+                    filter: { commentOnId: documentObjectId, postedDate },
+                    page: { number: page },
+                    sort: 'postedDate',
+                },
+            });
+            return [res.data.data, res.data.meta];
         },
-    });
-    axiosInstance.interceptors.request.use(urlParamInterceptor);
-    return axiosInstance;
+        async getComment({ commentId }) {
+            const res = await axios.get('/comments/:id', {
+                params: {
+                    id: commentId,
+                },
+            });
+            return res.data.data;
+        },
+        async getDocket({ docketId }) {
+            const res = await axios.get('/docket/:id', {
+                params: {
+                    id: docketId,
+                },
+            });
+            return res.data.data;
+        },
+        async getDocument({ documentId }) {
+            const res = await axios.get('/documents/:id', {
+                params: {
+                    id: documentId,
+                },
+            });
+            return res.data.data;
+        },
+    };
 }
 function getOptions() {
     const envOptions = cleanEnv(process.env, {
@@ -30,13 +52,29 @@ function getOptions() {
         baseURL: envOptions.REGULATIONS_BASE_URL,
     };
 }
+function createAxios(options) {
+    const axiosInstance = axiosStatic.create({
+        baseURL: options.baseURL,
+        headers: {
+            'Content-Type': 'application/vnd.api+json;charset=UTF-8',
+            'X-Api-Key': options.apiKey,
+        },
+        paramsSerializer,
+    });
+    axiosInstance.interceptors.request.use(urlParamInterceptor);
+    return axiosInstance;
+}
 function urlParamInterceptor(config) {
-    const config_ = config;
-    const replaceTokens = (urlPart) => Object.entries(config_.urlParams).reduce((memo, [k, v]) => memo.replace(`:${k}`, encodeURIComponent(v)), urlPart);
-    return {
-        ...config,
-        url: replaceTokens(config.url),
-        baseUrl: replaceTokens(config.baseURL),
-    };
+    for (const k in config.params) {
+        const v = config.params[k];
+        if (config.url?.includes(`:${k}`)) {
+            config.url = config.url.replace(`:${k}`, encodeURIComponent(v));
+            delete config.params[k];
+        }
+    }
+    return config;
+}
+function paramsSerializer(params) {
+    return Qs.stringify(params);
 }
 //# sourceMappingURL=regulationsGovApi.js.map
